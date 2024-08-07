@@ -36,12 +36,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_miner_creation() {
-        let miner = Miner::new(4);
-        assert_eq!(miner.nb_threads, 4);
-    }
-
-    #[test]
     fn test_mine() {
         // Easier target for quicker test
         let target: BigUint = BigUint::from_bytes_be(&[
@@ -61,7 +55,7 @@ mod tests {
             transaction_count: 0,
         };
 
-        let miner = Miner::new(1);
+        let miner = Miner::new();
         miner.mine(&mut block);
 
         let hash = block.compute_hash();

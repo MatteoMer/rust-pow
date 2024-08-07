@@ -1,5 +1,5 @@
 use crate::account::Account;
-use rlp::Encodable;
+use rlp::{Decodable, DecoderError, Encodable, Rlp};
 use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1, SecretKey};
 
 use blake3::Hash as Blake3Hash;
@@ -22,6 +22,17 @@ impl Encodable for UnsignedTransaction {
     }
 }
 
+impl Decodable for UnsignedTransaction {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        Ok(UnsignedTransaction {
+            sender: rlp.val_at(0)?,
+            receiver: rlp.val_at(1)?,
+            amount: rlp.val_at(2)?,
+            nonce: rlp.val_at(3)?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Copy)]
 pub struct Transaction<'a> {
     pub fields: &'a UnsignedTransaction,
@@ -39,6 +50,38 @@ impl<'a> Encodable for Transaction<'a> {
             .append(&signature[0..32].as_ref()) // r
             .append(&signature[32..64].as_ref()) // s
             .append(&self.tx_id.as_bytes().as_slice());
+    }
+}
+
+impl<'a> Decodable for Transaction<'a> {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let fields = Box::new(UnsignedTransaction::decode(&rlp.at(0)?)?);
+        let signing_key_bytes: Vec<u8> = rlp.val_at(1)?;
+        let r: Vec<u8> = rlp.val_at(2)?;
+        let s: Vec<u8> = rlp.val_at(3)?;
+        let tx_id_bytes: Vec<u8> = rlp.val_at(4)?;
+
+        let signing_key = PublicKey::from_slice(&signing_key_bytes)
+            .map_err(|_| DecoderError::Custom("Invalid public key"))?;
+
+        let mut signature_bytes = [0u8; 64];
+        signature_bytes[..32].copy_from_slice(&r);
+        signature_bytes[32..].copy_from_slice(&s);
+        let signature = Signature::from_compact(&signature_bytes)
+            .map_err(|_| DecoderError::Custom("Invalid signature"))?;
+
+        let tx_id = Blake3Hash::from_bytes(
+            tx_id_bytes
+                .try_into()
+                .map_err(|_| DecoderError::Custom("Invalid tx_id length"))?,
+        );
+
+        Ok(Transaction {
+            fields: Box::leak(fields),
+            signature,
+            signing_key,
+            tx_id,
+        })
     }
 }
 

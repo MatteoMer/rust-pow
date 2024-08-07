@@ -1,4 +1,4 @@
-use rlp::{Encodable, RlpStream};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 
 use crate::wallet::Address;
 
@@ -18,5 +18,15 @@ impl Encodable for Account {
             .append(&self.address)
             .append(&self.nonce)
             .append(&self.balance);
+    }
+}
+
+impl Decodable for Account {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        Ok(Account {
+            address: rlp.val_at(0)?,
+            nonce: rlp.val_at(1)?,
+            balance: rlp.val_at(2)?,
+        })
     }
 }

@@ -1,6 +1,6 @@
 use pem::{encode, Pem};
 use rand::thread_rng;
-use rlp::{Encodable, RlpStream};
+use rlp::{Decodable, DecoderError, Encodable, Rlp, RlpStream};
 use secp256k1::{PublicKey, Secp256k1, SecretKey};
 use std::{
     env,
@@ -22,6 +22,19 @@ pub struct Address {
 impl Encodable for Address {
     fn rlp_append(&self, s: &mut RlpStream) {
         s.append(&self.addr.as_bytes().as_slice());
+    }
+}
+
+impl Decodable for Address {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        let bytes: Vec<u8> = rlp.as_val()?;
+        Ok(Address {
+            addr: Blake3Hash::from_bytes(
+                bytes
+                    .try_into()
+                    .map_err(|_| DecoderError::Custom("Invalid address length"))?,
+            ),
+        })
     }
 }
 

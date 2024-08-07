@@ -1,0 +1,18 @@
+[package]
+name = "node"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+path = "./src/lib.rs"
+
+[dependencies]
+blake3 = "1.5.3"
+core = {path = '../core'}
+leveldb = "0.8.6"
+num-bigint = "0.4.6"
+num-traits = "0.2.19"
+rlp = "0.5.2"
+
+[dev-dependencies]
+tempfile = "3.12.0"

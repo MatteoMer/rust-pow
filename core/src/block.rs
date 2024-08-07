@@ -1,7 +1,7 @@
 use crate::transaction::Transaction;
 use blake3::{Hash as Blake3Hash, Hasher};
 use num_bigint::BigUint;
-use rlp::Encodable;
+use rlp::{Decodable, DecoderError, Encodable, Rlp};
 
 #[derive(Clone)]
 pub struct BlockHeader {
@@ -23,6 +23,30 @@ impl Encodable for BlockHeader {
     }
 }
 
+impl Decodable for BlockHeader {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.item_count()? != 5 {
+            return Err(DecoderError::RlpIncorrectListLen);
+        }
+
+        Ok(BlockHeader {
+            timestamp: rlp.val_at(0)?,
+            target: BigUint::from_bytes_le(rlp.val_at::<Vec<u8>>(1)?.as_slice()),
+            nonce: rlp.val_at(2)?,
+            merkle_root: Blake3Hash::from_bytes(
+                rlp.val_at::<Vec<u8>>(3)?
+                    .try_into()
+                    .map_err(|_| DecoderError::Custom("Invalid merkle root length"))?,
+            ),
+            previous_block_hash: Blake3Hash::from_bytes(
+                rlp.val_at::<Vec<u8>>(4)?
+                    .try_into()
+                    .map_err(|_| DecoderError::Custom("Invalid previous block hash length"))?,
+            ),
+        })
+    }
+}
+
 #[derive(Clone)]
 pub struct Block<'a> {
     pub header: BlockHeader,
@@ -36,6 +60,20 @@ impl Encodable for Block<'_> {
             .append(&self.header)
             .append_list(&self.transactions)
             .append(&self.transaction_count);
+    }
+}
+
+impl<'a> Decodable for Block<'a> {
+    fn decode(rlp: &Rlp) -> Result<Self, DecoderError> {
+        if rlp.item_count()? != 3 {
+            return Err(DecoderError::RlpIncorrectListLen);
+        }
+
+        Ok(Block {
+            header: rlp.val_at(0)?,
+            transactions: rlp.list_at(1)?,
+            transaction_count: rlp.val_at(2)?,
+        })
     }
 }
 
@@ -125,7 +163,7 @@ pub mod tests {
         let sender = mock_account_from_wallet(&sender_wallet, 100);
         let receiver = mock_account_from_wallet(&receiver_wallet, 0);
 
-        let unsigned_tx = UnsignedTransaction::new(sender, receiver, 50, sender_wallet.public_key);
+        let unsigned_tx = UnsignedTransaction::new(sender, receiver, 50);
         let tx = unsigned_tx.sign(sender_wallet.private_key);
 
         block.append_transaction(tx);
@@ -145,15 +183,10 @@ pub mod tests {
         let sender = mock_account_from_wallet(&sender_wallet, 100);
         let receiver = mock_account_from_wallet(&receiver_wallet, 0);
 
-        let unsigned_tx1 = UnsignedTransaction::new(
-            sender.clone(),
-            receiver.clone(),
-            50,
-            sender_wallet.public_key,
-        );
+        let unsigned_tx1 = UnsignedTransaction::new(sender.clone(), receiver.clone(), 50);
         let tx1 = unsigned_tx1.sign(sender_wallet.private_key);
 
-        let unsigned_tx2 = UnsignedTransaction::new(sender, receiver, 30, sender_wallet.public_key);
+        let unsigned_tx2 = UnsignedTransaction::new(sender, receiver, 30);
         let tx2 = unsigned_tx2.sign(sender_wallet.private_key);
 
         block.append_transaction(tx1);
@@ -204,7 +237,7 @@ pub mod tests {
         let sender = mock_account_from_wallet(&sender_wallet, 100);
         let receiver = mock_account_from_wallet(&receiver_wallet, 0);
 
-        let unsigned_tx = UnsignedTransaction::new(sender, receiver, 50, sender_wallet.public_key);
+        let unsigned_tx = UnsignedTransaction::new(sender, receiver, 50);
         let tx = unsigned_tx.sign(sender_wallet.private_key);
 
         // This should not panic
@@ -295,12 +328,7 @@ pub mod tests {
         let receiver_wallet = create_mock_wallet();
         let sender = mock_account_from_wallet(&sender_wallet, 100);
         let receiver = mock_account_from_wallet(&receiver_wallet, 0);
-        let unsigned_tx = UnsignedTransaction::new(
-            sender.clone(),
-            receiver.clone(),
-            50,
-            sender_wallet.public_key,
-        );
+        let unsigned_tx = UnsignedTransaction::new(sender.clone(), receiver.clone(), 50);
         let tx = unsigned_tx.sign(sender_wallet.private_key);
 
         // Add the transaction to block1
