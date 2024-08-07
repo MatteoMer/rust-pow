@@ -4,7 +4,7 @@ use secp256k1::{ecdsa::Signature, Message, PublicKey, Secp256k1, SecretKey};
 
 use blake3::Hash as Blake3Hash;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct UnsignedTransaction {
     pub sender: Account,
     pub receiver: Account,
@@ -22,7 +22,7 @@ impl Encodable for UnsignedTransaction {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct Transaction<'a> {
     pub fields: &'a UnsignedTransaction,
     pub signature: Signature,
@@ -44,7 +44,7 @@ impl<'a> Encodable for Transaction<'a> {
 
 impl UnsignedTransaction {
     // TODO: check if tx is valid
-    pub fn new(sender: Account, receiver: Account, amount: u64, signing_key: PublicKey) -> Self {
+    pub fn new(sender: Account, receiver: Account, amount: u64) -> Self {
         let nonce = &sender.nonce + 1;
         Self {
             sender,
@@ -141,7 +141,7 @@ pub mod tests {
 
         let bob_acc = create_mock_account(0);
 
-        let tx = UnsignedTransaction::new(alice_acc, bob_acc, 5, alice_wallet.public_key);
+        let tx = UnsignedTransaction::new(alice_acc, bob_acc, 5);
 
         let signed_tx = tx.sign(alice_wallet.private_key);
         let secp = Secp256k1::new();
@@ -164,7 +164,7 @@ pub mod tests {
         let bob_wallet = create_mock_wallet();
         let bob_acc = mock_account_from_wallet(&bob_wallet, 0);
 
-        let tx = UnsignedTransaction::new(alice_acc, bob_acc, 5, alice_wallet.public_key);
+        let tx = UnsignedTransaction::new(alice_acc, bob_acc, 5);
 
         let signed_tx = tx.sign(alice_wallet.private_key);
         let secp = Secp256k1::new();

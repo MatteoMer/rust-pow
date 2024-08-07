@@ -13,7 +13,7 @@ use blake3::Hash as Blake3Hash;
 
 const PEM_TYPE: &str = "EC PRIVATE KEY";
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct Address {
     pub addr: Blake3Hash,
 }

@@ -4,7 +4,7 @@ use crate::wallet::Address;
 
 /// Basic account on the blockchain
 /// Stored in the node's DB
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Copy)]
 pub struct Account {
     pub address: Address,
     pub nonce: u64,

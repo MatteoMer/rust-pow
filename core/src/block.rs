@@ -1,35 +1,14 @@
 use crate::transaction::Transaction;
 use blake3::{Hash as Blake3Hash, Hasher};
+use num_bigint::BigUint;
 use rlp::Encodable;
 
-const NBITS: u32 = 0x1f00ffff;
-
-pub enum BlockState {
-    Unmined,
-    Mined { hash: Blake3Hash },
-}
-
-impl Encodable for BlockState {
-    fn rlp_append(&self, stream: &mut rlp::RlpStream) {
-        match self {
-            BlockState::Unmined => {
-                stream.begin_list(1);
-                stream.append(&0u8); // 0 indicates Unmined state
-            }
-            BlockState::Mined { hash } => {
-                stream.begin_list(2);
-                stream.append(&1u8); // 1 indicates Mined state
-                stream.append(&hash.as_bytes().as_slice());
-            }
-        }
-    }
-}
-
+#[derive(Clone)]
 pub struct BlockHeader {
     pub previous_block_hash: Blake3Hash,
     pub timestamp: u64,
     pub merkle_root: Blake3Hash,
-    pub n_bits: u32,
+    pub target: BigUint,
     pub nonce: u32,
 }
 
@@ -37,49 +16,49 @@ impl Encodable for BlockHeader {
     fn rlp_append(&self, s: &mut rlp::RlpStream) {
         s.begin_list(5)
             .append(&self.timestamp)
-            .append(&self.n_bits)
+            .append(&self.target.to_bytes_le())
             .append(&self.nonce)
             .append(&self.merkle_root.as_bytes().as_slice())
             .append(&self.previous_block_hash.as_bytes().as_slice());
     }
 }
 
+#[derive(Clone)]
 pub struct Block<'a> {
     pub header: BlockHeader,
     pub transactions: Vec<Transaction<'a>>,
     pub transaction_count: u64,
-    pub state: BlockState,
 }
 
 impl Encodable for Block<'_> {
     fn rlp_append(&self, s: &mut rlp::RlpStream) {
-        s.begin_list(4)
+        s.begin_list(3)
             .append(&self.header)
             .append_list(&self.transactions)
-            .append(&self.transaction_count)
-            .append(&self.state);
+            .append(&self.transaction_count);
     }
 }
 
 impl<'a> Block<'a> {
     pub fn new(previous_block_hash: Blake3Hash) -> Self {
+        let target: BigUint = BigUint::from_bytes_be(&[
+            0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ]);
+
         let timestamp = chrono::Utc::now().timestamp();
         Self {
             header: BlockHeader {
                 previous_block_hash,
                 merkle_root: blake3::hash(&[0; 32]),
                 timestamp: timestamp.try_into().unwrap(),
-                n_bits: NBITS,
+                target,
                 nonce: 0,
             },
             transactions: vec![],
             transaction_count: 0,
-            state: BlockState::Unmined,
         }
-    }
-
-    pub fn is_mined(&self) -> bool {
-        matches!(self.state, BlockState::Mined { .. })
     }
 
     /// Append and validate tx (verifying signature) and TODO: verify within node
@@ -130,7 +109,6 @@ pub mod tests {
         let block = Block::new(previous_hash);
 
         assert_eq!(block.header.previous_block_hash, previous_hash);
-        assert_eq!(block.header.n_bits, NBITS);
         assert_eq!(block.header.nonce, 0);
         assert!(block.header.timestamp <= chrono::Utc::now().timestamp().try_into().unwrap());
         assert_eq!(block.transactions.len(), 0);
@@ -237,34 +215,18 @@ pub mod tests {
     }
 
     #[test]
-    fn test_block_state_encoding() {
-        let unmined_state = BlockState::Unmined;
-        let mined_state = BlockState::Mined {
-            hash: blake3::hash(b"mined block hash"),
-        };
-
-        let mut unmined_stream = rlp::RlpStream::new();
-        unmined_state.rlp_append(&mut unmined_stream);
-        let unmined_encoded = unmined_stream.out();
-
-        let mut mined_stream = rlp::RlpStream::new();
-        mined_state.rlp_append(&mut mined_stream);
-        let mined_encoded = mined_stream.out();
-
-        assert_ne!(unmined_encoded, mined_encoded);
-        assert_eq!(unmined_encoded[0], 0xc1); // List of 1 item
-        assert_eq!(unmined_encoded[1], 0x80); // Encoded representation of 0
-        assert_eq!(mined_encoded[0], 0xe2); // List of 2 items
-        assert_eq!(mined_encoded[1], 0x01); // Mined state indicator
-    }
-
-    #[test]
     fn test_block_header_encoding() {
+        let target = BigUint::from_bytes_be(&[
+            0x00, 0x00, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00,
+        ]);
+
         let header = BlockHeader {
             previous_block_hash: blake3::hash(b"previous block"),
             timestamp: 1625097600,
             merkle_root: blake3::hash(b"merkle root"),
-            n_bits: NBITS,
+            target,
             nonce: 12345,
         };
 
@@ -272,7 +234,122 @@ pub mod tests {
         header.rlp_append(&mut stream);
         let encoded = stream.out();
 
-        assert!(!encoded.is_empty());
-        assert_eq!(encoded[0], 0xf8); // List indicator
+        // Check that the encoded data starts with a list indicator
+        assert!(encoded[0] >= 0xf8, "Expected a list indicator >= 0xf8");
+
+        // Decode the RLP data
+        let decoded: rlp::Rlp = rlp::Rlp::new(&encoded);
+        assert_eq!(
+            decoded.item_count().unwrap(),
+            5,
+            "BlockHeader should have 5 fields"
+        );
+
+        // Check each field
+        let decoded_timestamp: u64 = decoded.val_at(0).unwrap();
+        assert_eq!(decoded_timestamp, 1625097600, "Timestamp mismatch");
+
+        let decoded_nonce: u32 = decoded.val_at(2).unwrap();
+        assert_eq!(decoded_nonce, 12345, "Nonce mismatch");
+
+        let decoded_merkle_root: Vec<u8> = decoded.val_at(3).unwrap();
+        assert_eq!(
+            decoded_merkle_root.len(),
+            32,
+            "Merkle root should be 32 bytes"
+        );
+        assert_eq!(
+            decoded_merkle_root,
+            header.merkle_root.as_bytes(),
+            "Merkle root mismatch"
+        );
+
+        let decoded_previous_hash: Vec<u8> = decoded.val_at(4).unwrap();
+        assert_eq!(
+            decoded_previous_hash.len(),
+            32,
+            "Previous block hash should be 32 bytes"
+        );
+        assert_eq!(
+            decoded_previous_hash,
+            header.previous_block_hash.as_bytes(),
+            "Previous block hash mismatch"
+        );
+    }
+    #[test]
+    fn test_compute_hash() {
+        // Create two identical blocks
+        let previous_hash = blake3::hash(b"previous block hash");
+        let mut block1 = Block::new(previous_hash);
+        let mut block2 = Block::new(previous_hash);
+
+        // Verify that identical blocks have the same hash
+        assert_eq!(
+            block1.compute_hash(),
+            block2.compute_hash(),
+            "Identical blocks should have the same hash"
+        );
+
+        // Create a transaction
+        let sender_wallet = create_mock_wallet();
+        let receiver_wallet = create_mock_wallet();
+        let sender = mock_account_from_wallet(&sender_wallet, 100);
+        let receiver = mock_account_from_wallet(&receiver_wallet, 0);
+        let unsigned_tx = UnsignedTransaction::new(
+            sender.clone(),
+            receiver.clone(),
+            50,
+            sender_wallet.public_key,
+        );
+        let tx = unsigned_tx.sign(sender_wallet.private_key);
+
+        // Add the transaction to block1
+        block1.append_transaction(tx.clone());
+
+        // Verify that the hash has changed after adding a transaction
+        assert_ne!(
+            block1.compute_hash(),
+            block2.compute_hash(),
+            "Block hash should change after adding a transaction"
+        );
+
+        // Add the same transaction to block2
+        block2.append_transaction(tx);
+
+        // Verify that the hashes are the same again
+        assert_eq!(
+            block1.compute_hash(),
+            block2.compute_hash(),
+            "Blocks with the same transactions should have the same hash"
+        );
+
+        // Change the nonce of block1
+        block1.header.nonce += 1;
+
+        // Verify that the hash has changed after modifying the nonce
+        assert_ne!(
+            block1.compute_hash(),
+            block2.compute_hash(),
+            "Block hash should change after modifying the nonce"
+        );
+
+        // Create a new block with a different previous hash
+        let different_previous_hash = blake3::hash(b"different previous block hash");
+        let block3 = Block::new(different_previous_hash);
+
+        // Verify that the hash is different for a block with a different previous hash
+        assert_ne!(
+            block1.compute_hash(),
+            block3.compute_hash(),
+            "Blocks with different previous hashes should have different hashes"
+        );
+
+        // Verify that computing the hash multiple times for the same block yields the same result
+        let hash1 = block1.compute_hash();
+        let hash2 = block1.compute_hash();
+        assert_eq!(
+            hash1, hash2,
+            "Computing the hash multiple times for the same block should yield the same result"
+        );
     }
 }
